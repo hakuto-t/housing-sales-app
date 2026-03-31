@@ -1,0 +1,355 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== Enums ====================
+
+enum Role {
+  LEARNER
+  ADMIN
+}
+
+enum QuestionType {
+  MCQ
+  FREE_TEXT
+  CASE_MULTI
+  DEFINITION_FIX
+  ORDERING
+}
+
+enum Verdict {
+  CORRECT
+  PARTIAL
+  INCORRECT
+}
+
+enum SessionMode {
+  LEARN
+  TEST
+  EXAM
+}
+
+enum ExamStatus {
+  IN_PROGRESS
+  PASSED
+  FAILED
+  ABANDONED
+}
+
+// ==================== Company ====================
+
+model Company {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users           User[]
+  glossaryTerms   GlossaryTerm[]
+  questions       Question[]
+  rankingAllTime  RankingAllTime[]
+  rankingMonthly  RankingMonthly[]
+}
+
+// ==================== User ====================
+
+model User {
+  id           String   @id @default(cuid())
+  email        String?
+  passwordHash String?
+  name         String
+  role         Role     @default(LEARNER)
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id])
+
+  // Gamification
+  xp            Int      @default(0)
+  level         Int      @default(1)
+  streakDays    Int      @default(0)
+  lastActiveAt  DateTime?
+  isGraduated   Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions        LearningSession[]
+  submissions     Submission[]
+  badges          UserBadge[]
+  rankingAllTime  RankingAllTime?
+  rankingMonthly  RankingMonthly[]
+  examSessions    ExamSession[]
+  weakpointProfile WeakpointProfile?
+
+  @@unique([companyId, name])
+}
+
+// ==================== Glossary ====================
+
+model GlossaryTerm {
+  id           String  @id @default(cuid())
+  companyId    String
+  company      Company @relation(fields: [companyId], references: [id])
+
+  term           String
+  definition     String   @db.Text
+  relatedDiff    String?  @db.Text
+  usageExample   String?  @db.Text
+  misuseExample  String?  @db.Text
+  imageUrl       String?
+  category       String
+  difficulty     Int      @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId, category])
+}
+
+// ==================== Questions ====================
+
+model Question {
+  id        String       @id @default(cuid())
+  companyId String
+  company   Company      @relation(fields: [companyId], references: [id])
+
+  type       QuestionType
+  category   String
+  difficulty Int          @default(1)
+  text       String       @db.Text
+  explanation String?     @db.Text
+
+  mustInclude    String[]
+  forbiddenPoints String[]
+  relatedTerms   String[]
+  modelAnswer    String?  @db.Text
+
+  correctOrder   String[]
+
+  incorrectDefinition String? @db.Text
+  correctDefinition   String? @db.Text
+
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  options     QuestionOption[]
+  tags        QuestionTag[]
+  submissions Submission[]
+  explanationAssets ExplanationAsset[]
+
+  @@index([companyId, category])
+  @@index([type])
+}
+
+model QuestionOption {
+  id         String   @id @default(cuid())
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  text       String
+  isCorrect  Boolean  @default(false)
+  position   Int
+  explanation String? @db.Text
+
+  @@index([questionId])
+}
+
+model QuestionTag {
+  id         String   @id @default(cuid())
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  tag String
+
+  @@index([questionId])
+  @@index([tag])
+}
+
+model ExplanationAsset {
+  id         String   @id @default(cuid())
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  type String
+  url  String
+  alt  String?
+
+  @@index([questionId])
+}
+
+// ==================== Learning Sessions ====================
+
+model LearningSession {
+  id     String      @id @default(cuid())
+  userId String
+  user   User        @relation(fields: [userId], references: [id])
+  mode   SessionMode
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  totalQuestions  Int @default(0)
+  correctCount   Int @default(0)
+  xpEarned       Int @default(0)
+  comboMax       Int @default(0)
+
+  submissions Submission[]
+
+  @@index([userId, mode])
+}
+
+// ==================== Submissions ====================
+
+model Submission {
+  id        String          @id @default(cuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id])
+  questionId String
+  question   Question       @relation(fields: [questionId], references: [id])
+  sessionId  String
+  session    LearningSession @relation(fields: [sessionId], references: [id])
+
+  selectedOptionId String?
+  freeTextAnswer   String? @db.Text
+  orderingAnswer   String[]
+  fixedDefinition  String? @db.Text
+
+  isCorrect    Boolean
+  score        Int       @default(0)
+  verdict      Verdict
+  xpAwarded    Int       @default(0)
+  timeSpentSec Int?
+  comboCount   Int       @default(0)
+
+  judgmentReason String? @db.Text
+
+  createdAt DateTime @default(now())
+
+  aiScore AIScore?
+
+  @@index([userId, questionId])
+  @@index([sessionId])
+}
+
+// ==================== AI Scoring ====================
+
+model AIScore {
+  id           String     @id @default(cuid())
+  submissionId String     @unique
+  submission   Submission @relation(fields: [submissionId], references: [id])
+
+  score          Int
+  verdict        Verdict
+  missingPoints  String[]
+  misconception  String[]
+  modelAnswer    String?  @db.Text
+  nextRecommendation String[]
+
+  rawResponse    String   @db.Text
+  provider       String
+  model          String
+  retryCount     Int      @default(0)
+
+  createdAt DateTime @default(now())
+}
+
+// ==================== Gamification ====================
+
+model Badge {
+  id          String @id @default(cuid())
+  name        String @unique
+  description String
+  iconUrl     String?
+  condition   String @db.Text
+
+  createdAt DateTime @default(now())
+
+  userBadges UserBadge[]
+}
+
+model UserBadge {
+  id      String @id @default(cuid())
+  userId  String
+  user    User   @relation(fields: [userId], references: [id])
+  badgeId String
+  badge   Badge  @relation(fields: [badgeId], references: [id])
+
+  awardedAt DateTime @default(now())
+
+  @@unique([userId, badgeId])
+}
+
+// ==================== Rankings ====================
+
+model RankingAllTime {
+  id        String  @id @default(cuid())
+  userId    String  @unique
+  user      User    @relation(fields: [userId], references: [id])
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  totalXp   Int @default(0)
+  rank      Int @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId, totalXp(sort: Desc)])
+}
+
+model RankingMonthly {
+  id        String  @id @default(cuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id])
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  yyyymm    String
+  monthlyXp Int    @default(0)
+  rank      Int    @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, yyyymm])
+  @@index([companyId, yyyymm, monthlyXp(sort: Desc)])
+}
+
+// ==================== Exam ====================
+
+model ExamSession {
+  id     String     @id @default(cuid())
+  userId String
+  user   User       @relation(fields: [userId], references: [id])
+  status ExamStatus @default(IN_PROGRESS)
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  totalScore     Int?
+  categoryScores String? @db.Text
+  questionCount  Int     @default(120)
+
+  currentIndex   Int @default(0)
+  answers        String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+}
+
+// ==================== Weakpoint ====================
+
+model WeakpointProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  categoryStats String @db.Text
+
+  lastCalculatedAt DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
